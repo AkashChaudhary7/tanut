@@ -413,6 +413,100 @@ export default function AdminPanel({
       const parsedList: Question[] = [];
       const trimmed = content.trim();
 
+      // Unified robust mapping helper for arbitrary question objects (qObj)
+      const mapQObjToQuestion = (qObj: any, idx: number, prefix: string): Question => {
+        // 1. Question Text
+        const qText = qObj.question || qObj.questionText || qObj.text || "";
+
+        // 2. Options extraction (support option_1 to option_10, option1 to option10, Option_1 to Option_10, Option1 to Option10, optionA/optA etc, or Array options)
+        let options: string[] = [];
+        if (Array.isArray(qObj.options)) {
+          options = qObj.options.map((o: any) => String(o).trim());
+        } else if (qObj.option_1 !== undefined || qObj.option1 !== undefined) {
+          for (let j = 1; j <= 10; j++) {
+            const opt = qObj[`option_${j}`] !== undefined ? qObj[`option_${j}`] : qObj[`option${j}`];
+            if (opt !== undefined && opt !== null && String(opt).trim() !== "") {
+              options.push(String(opt).trim());
+            }
+          }
+        } else if (qObj.optionA !== undefined || qObj.optA !== undefined || qObj.option_A !== undefined) {
+          options = [
+            qObj.optionA || qObj.optA || qObj.option_A || "",
+            qObj.optionB || qObj.optB || qObj.option_B || "",
+            qObj.optionC || qObj.optC || qObj.option_C || "",
+            qObj.optionD || qObj.optD || qObj.option_D || "",
+            qObj.optionE || qObj.optE || qObj.option_E || ""
+          ].filter(Boolean).map(o => String(o).trim());
+        } else {
+          for (let j = 1; j <= 10; j++) {
+            const opt = qObj[`Option_${j}`] || qObj[`Option${j}`] || qObj[`opt_${j}`] || qObj[`opt${j}`];
+            if (opt !== undefined && opt !== null && String(opt).trim() !== "") {
+              options.push(String(opt).trim());
+            }
+          }
+        }
+
+        if (options.length === 0) {
+          options = ["", "", "", ""];
+        }
+
+        while (options.length < 4) {
+          options.push(`Option ${options.length + 1}`);
+        }
+
+        // 3. Correct Option Index parsing (handle qObj.answer, qObj.answer_key, qObj.correctOptionIndex, etc.)
+        let correctOptionIndex = 0;
+        const ansValue = qObj.answer !== undefined ? qObj.answer : (qObj.correctOptionIndex !== undefined ? qObj.correctOptionIndex : qObj.answer_key);
+        if (ansValue !== undefined && ansValue !== null) {
+          if (typeof ansValue === "number") {
+            if (ansValue >= 1 && ansValue <= options.length) {
+              correctOptionIndex = ansValue - 1;
+            } else {
+              correctOptionIndex = ansValue;
+            }
+          } else {
+            const parsedAns = parseInt(String(ansValue), 10);
+            if (!isNaN(parsedAns)) {
+              if (parsedAns >= 1 && parsedAns <= options.length) {
+                correctOptionIndex = parsedAns - 1;
+              } else {
+                correctOptionIndex = parsedAns;
+              }
+            } else {
+              const letter = String(ansValue).trim().toUpperCase();
+              if (["A", "1", "अ", "क"].includes(letter)) correctOptionIndex = 0;
+              else if (["B", "2", "ब", "KH", "ख"].includes(letter)) correctOptionIndex = 1;
+              else if (["C", "3", "स", "ग"].includes(letter)) correctOptionIndex = 2;
+              else if (["D", "4", "द", "घ"].includes(letter)) correctOptionIndex = 3;
+              else if (["E", "5", "य", "ङ"].includes(letter)) correctOptionIndex = 4;
+            }
+          }
+        }
+
+        if (correctOptionIndex < 0 || correctOptionIndex >= options.length) {
+          correctOptionIndex = 0;
+        }
+
+        // 4. Explanation
+        const explanation = qObj.solution_text || qObj.solution || qObj.explanation || qObj.desc || qObj.description || "Ingested study MCQ";
+
+        return {
+          id: qObj.id || `${prefix}-${Date.now()}-${idx}-${Math.random().toString(36).substring(4)}`,
+          question: qText,
+          options: options,
+          correctOptionIndex: correctOptionIndex,
+          explanation: explanation,
+          subject: qObj.subject || getSubjectFromQuestionText(qText),
+          topic: qObj.topic || "General Awareness",
+          subtopic: qObj.subtopic || "",
+          difficulty: qObj.difficulty || "medium",
+          sourceType: qObj.sourceType || "notes",
+          timesAnswered: 0,
+          timesCorrect: 0,
+          targetExam: qObj.targetExam || activeExam
+        };
+      };
+
       // Check first for Kaxa/Appx structured dynamic test URL matches
       // Pattern captures http ... .json links inside scripts or texts
       const urlPattern = /(https?:\/\/[^\s'"`]+\.json[^\s'"`]*|https?:\/\/[^\s'"`]+test_title_question[^\s'"`]+)/i;
@@ -428,68 +522,8 @@ export default function AdminPanel({
             if (Array.isArray(arr) && arr.length > 0) {
               const fetchedList: Question[] = [];
               arr.forEach((qObj: any, idx: number) => {
-                let options: string[] = [];
-                if (Array.isArray(qObj.options)) {
-                  options = qObj.options.map((o: any) => String(o).trim());
-                } else if (qObj.optionA || qObj.optionB) {
-                  options = [qObj.optionA || "", qObj.optionB || "", qObj.optionC || "", qObj.optionD || ""].filter(Boolean).map(o => String(o).trim());
-                } else {
-                  // extract option_1, option_2, ... option_10 or option1, option2...
-                  for (let j = 1; j <= 10; j++) {
-                    const opt = qObj[`option_${j}`] || qObj[`option${j}`] || qObj[`Option_${j}`] || qObj[`Option${j}`];
-                    if (opt !== undefined && opt !== null && String(opt).trim() !== "") {
-                      options.push(String(opt).trim());
-                    }
-                  }
-                }
-
-                while (options.length < 4) {
-                  options.push(`Option ${options.length + 1}`);
-                }
-
-                let correctOptionIndex = 0;
-                const ansValue = qObj.answer !== undefined ? qObj.answer : qObj.correctOptionIndex;
-                if (ansValue !== undefined && ansValue !== null) {
-                  if (typeof ansValue === "number") {
-                    if (ansValue >= 1 && ansValue <= options.length) {
-                      correctOptionIndex = ansValue - 1;
-                    } else {
-                      correctOptionIndex = ansValue;
-                    }
-                  } else {
-                    const parsedAns = parseInt(String(ansValue), 10);
-                    if (!isNaN(parsedAns) && parsedAns >= 1 && parsedAns <= options.length) {
-                      correctOptionIndex = parsedAns - 1;
-                    } else {
-                      const letter = String(ansValue).trim().toUpperCase();
-                      if (["A", "1", "अ", "क"].includes(letter)) correctOptionIndex = 0;
-                      else if (["B", "2", "ब", "KH", "ख"].includes(letter)) correctOptionIndex = 1;
-                      else if (["C", "3", "स", "ग"].includes(letter)) correctOptionIndex = 2;
-                      else if (["D", "4", "द", "घ"].includes(letter)) correctOptionIndex = 3;
-                    }
-                  }
-                }
-
-                const questionText = qObj.question || qObj.questionText || qObj.text || "";
-                if (questionText) {
-                  fetchedList.push({
-                    id: qObj.id || `fetched-${Date.now()}-${idx}-${Math.random().toString(36).substring(4)}`,
-                    question: questionText,
-                    options: options,
-                    correctOptionIndex: correctOptionIndex,
-                    explanation: qObj.solution || qObj.explanation || qObj.desc || qObj.description || "Linked remote database MCQ",
-                    subject: qObj.subject || getSubjectFromQuestionText(questionText),
-                    topic: qObj.topic || "General Awareness",
-                    subtopic: qObj.subtopic || "",
-                    difficulty: qObj.difficulty || "medium",
-                    sourceType: qObj.sourceType || "notes",
-                    timesAnswered: 0,
-                    timesCorrect: 0,
-                    targetExam: qObj.targetExam || activeExam
-                  });
-                }
+                fetchedList.push(mapQObjToQuestion(qObj, idx, "fetched"));
               });
-
               if (fetchedList.length > 0) {
                 return fetchedList;
               }
@@ -504,25 +538,11 @@ export default function AdminPanel({
       if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
         try {
           const data = JSON.parse(trimmed);
-          const arr = Array.isArray(data) ? data : (data.questions || data.items || []);
+          const arr = Array.isArray(data) ? data : (data.questions || data.data || data.items || []);
           if (Array.isArray(arr)) {
-            arr.forEach((qObj: any) => {
-              if (qObj.question && (qObj.options || (qObj.optionA && qObj.optionB))) {
-                parsedList.push({
-                  id: qObj.id || `json-${Date.now()}-${Math.random().toString(36).substring(4)}`,
-                  question: qObj.question,
-                  options: Array.isArray(qObj.options) ? qObj.options : [qObj.optionA || "", qObj.optionB || "", qObj.optionC || "", qObj.optionD || ""].filter(Boolean),
-                  correctOptionIndex: typeof qObj.correctOptionIndex === "number" ? qObj.correctOptionIndex : (typeof qObj.answer === "number" ? qObj.answer : 0),
-                  explanation: qObj.explanation || qObj.desc || "Imported JSON MCQ",
-                  subject: qObj.subject || getSubjectFromQuestionText(qObj.question),
-                  topic: qObj.topic || "General",
-                  subtopic: qObj.subtopic || "",
-                  difficulty: qObj.difficulty || "medium",
-                  sourceType: qObj.sourceType || "notes",
-                  timesAnswered: 0,
-                  timesCorrect: 0,
-                  targetExam: qObj.targetExam || activeExam
-                });
+            arr.forEach((qObj: any, idx: number) => {
+              if (qObj.question || qObj.text) {
+                parsedList.push(mapQObjToQuestion(qObj, idx, "json"));
               }
             });
           }
@@ -538,41 +558,116 @@ export default function AdminPanel({
         let match;
         while ((match = scriptRegex.exec(content)) !== null) {
           const scriptText = match[1];
-          // Locate arrays containing question objects
-          const arrayMatch = scriptText.match(/\[\s*\{\s*["']?question["']?[\s\S]*?\}\s*\]/);
-          if (arrayMatch) {
-            const possibleJson = arrayMatch[0];
-            const cleanJson = possibleJson
-              .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":')
-              .replace(/'/g, '"')
-              .replace(/,(\s*[\]\}])/g, "$1");
-            try {
-              const data = JSON.parse(cleanJson);
-              if (Array.isArray(data)) {
-                data.forEach((qObj: any) => {
-                  if (qObj.question) {
-                    parsedList.push({
-                      id: qObj.id || `script-ing-${Date.now()}-${Math.random().toString(36).substring(4)}`,
-                      question: qObj.question,
-                      options: Array.isArray(qObj.options) ? qObj.options : [qObj.optionA || "", qObj.optionB || "", qObj.optionC || "", qObj.optionD || ""].filter(Boolean),
-                      correctOptionIndex: typeof qObj.correctOptionIndex === "number" ? qObj.correctOptionIndex : 0,
-                      explanation: qObj.explanation || "Parsed from quiz script",
-                      subject: qObj.subject || getSubjectFromQuestionText(qObj.question),
-                      topic: qObj.topic || "General",
-                      subtopic: qObj.subtopic || "",
-                      difficulty: qObj.difficulty || "medium",
-                      sourceType: qObj.sourceType || "notes",
-                      timesAnswered: 0,
-                      timesCorrect: 0,
-                      targetExam: qObj.targetExam || activeExam
+          // Try to locate arrays of objects defined as variables on QUESTIONS or questions or similar
+          const varPatterns = /(?:const|let|var|window\.)\s*(QUESTIONS|questions|QUIZ_QUESTIONS|quiz_questions|testQuestions|test_questions|test_title_question)\s*=\s*/i;
+          const varMatch = scriptText.match(varPatterns);
+          if (varMatch && varMatch.index !== undefined) {
+            const startOfArray = varMatch.index + varMatch[0].length;
+            const remnant = scriptText.substring(startOfArray);
+            if (remnant.trim().startsWith("[")) {
+              let bracketCount = 0;
+              let endIdx = -1;
+              let insideSingleQuote = false;
+              let insideDoubleQuote = false;
+              let insideBacktick = false;
+              let escapeActive = false;
+
+              for (let c = 0; c < remnant.length; c++) {
+                const char = remnant[c];
+                if (escapeActive) {
+                  escapeActive = false;
+                  continue;
+                }
+                if (char === "\\") {
+                  escapeActive = true;
+                  continue;
+                }
+                if (char === "'" && !insideDoubleQuote && !insideBacktick) {
+                  insideSingleQuote = !insideSingleQuote;
+                  continue;
+                }
+                if (char === '"' && !insideSingleQuote && !insideBacktick) {
+                  insideDoubleQuote = !insideDoubleQuote;
+                  continue;
+                }
+                if (char === '`' && !insideSingleQuote && !insideDoubleQuote) {
+                  insideBacktick = !insideBacktick;
+                  continue;
+                }
+
+                if (!insideSingleQuote && !insideDoubleQuote && !insideBacktick) {
+                  if (char === "[") {
+                    bracketCount++;
+                  } else if (char === "]") {
+                    bracketCount--;
+                    if (bracketCount === 0) {
+                      endIdx = c;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              if (endIdx !== -1) {
+                const arrayCode = remnant.substring(0, endIdx + 1);
+                try {
+                  const func = new Function(`return ${arrayCode};`);
+                  const dataArr = func();
+                  if (Array.isArray(dataArr) && dataArr.length > 0) {
+                    dataArr.forEach((qObj: any, idx: number) => {
+                      if (qObj.question || qObj.text) {
+                        parsedList.push(mapQObjToQuestion(qObj, idx, "script-ing"));
+                      }
                     });
                   }
-                });
+                } catch (err) {
+                  console.error("New Function array extraction failed, trying JSON regex clean:", err);
+                }
               }
-            } catch(e) {}
+            }
+          }
+
+          // Fallback legacy array extraction inside script block if standard variable matches didn't produce questions
+          if (parsedList.length === 0) {
+            const arrayMatch = scriptText.match(/\[\s*\{\s*["']?(?:question|id)["']?[\s\S]*?\}\s*\]/);
+            if (arrayMatch) {
+              const possibleJson = arrayMatch[0];
+              try {
+                // Try evaluation directly first! Extremely robust
+                const func = new Function(`return ${possibleJson};`);
+                const dataArr = func();
+                if (Array.isArray(dataArr) && dataArr.length > 0) {
+                  dataArr.forEach((qObj: any, idx: number) => {
+                    if (qObj.question || qObj.text) {
+                      parsedList.push(mapQObjToQuestion(qObj, idx, "script-ing"));
+                    }
+                  });
+                }
+              } catch (e) {
+                // Regex fallback parser
+                const cleanJson = possibleJson
+                  .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":')
+                  .replace(/'/g, '"')
+                  .replace(/,(\s*[\]\}])/g, "$1");
+                try {
+                  const data = JSON.parse(cleanJson);
+                  if (Array.isArray(data)) {
+                    data.forEach((qObj: any, idx: number) => {
+                      if (qObj.question) {
+                        parsedList.push(mapQObjToQuestion(qObj, idx, "script-ing"));
+                      }
+                    });
+                  }
+                } catch(err2) {
+                  console.error("Regex script parse failed too:", err2);
+                }
+              }
+            }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error("Script parse outer error:", e);
+      }
 
       if (parsedList.length > 0) return parsedList;
 
