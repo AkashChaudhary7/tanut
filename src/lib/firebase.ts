@@ -1,0 +1,18 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
+
+const app = initializeApp(firebaseConfig);
+
+// Set up Firestore with HTTP long-polling to reliably bypass server/proxy/gRPC WebSocket restrictions,
+// and enable multi-tab local caching for high performance and seamless offline fallbacks.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+}, firebaseConfig.firestoreDatabaseId);
+
+export const auth = getAuth();
+
